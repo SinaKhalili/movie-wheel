@@ -127,6 +127,7 @@ function SpinPage() {
   const [path, setPath] = useState<string[]>([])
   const [command, setCommand] = useState<SpinCommand | null>(null)
   const [busy, setBusy] = useState(false)
+  const [zapping, setZapping] = useState(false)
   const [winner, setWinner] = useState<Winner | null>(null)
   const seq = useRef(0)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
@@ -235,10 +236,11 @@ function SpinPage() {
           const full: Frame = { title: landed.label, slices: allSlices }
           // zap the sampled films onto the wheel one at a time — they really
           // were just drawn at random from the live catalog
-          const ZAP_MS = 90
+          const ZAP_MS = 140
           later(() => {
             setPath(nextPath)
             setCommand(null)
+            setZapping(true)
             setSubFrames((prev) => [
               ...(prev.length ? prev : [rootFrame]),
               { title: landed.label, slices: allSlices.slice(0, 1) },
@@ -255,7 +257,10 @@ function SpinPage() {
                 if (!muted) playTick()
               }, (upto - 1) * ZAP_MS)
             }
-            later(() => spinFrame(full), allSlices.length * ZAP_MS + 700)
+            later(() => {
+              setZapping(false)
+              spinFrame(full)
+            }, allSlices.length * ZAP_MS + 700)
           }, 700)
         })
         .catch(() => {
@@ -349,6 +354,13 @@ function SpinPage() {
                 <p className="max-w-[60%] text-center text-[var(--ink-dim)]">
                   Add films, wildcards, or filters to the lineup →
                 </p>
+              </div>
+            )}
+            {zapping && (
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+                <span className="marquee-pop animate-pulse rounded-full border border-[var(--line-strong)] bg-black/85 px-4 py-2 text-sm font-semibold text-[var(--gold-bright)] shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
+                  adding random movies…
+                </span>
               </div>
             )}
           </div>

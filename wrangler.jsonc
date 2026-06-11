@@ -6,6 +6,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "wheel",
 	"account_id": "fd2ae0bb538660ff067c49f9a75f22fa",
+	"routes": [{ "pattern": "wheel.sina.town", "custom_domain": true }],
 	"compatibility_date": "2025-09-02",
 	"compatibility_flags": [
 		"nodejs_compat"
