@@ -230,6 +230,38 @@ select.field {
   padding-right: 1.8rem;
 }
 
+/* lineup row actions: hover overlay on desktop, always-visible inline on touch */
+.row-actions {
+  position: absolute;
+  right: 0.25rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 2px 2rem;
+  background: linear-gradient(90deg, transparent, #201913 26%);
+  border-radius: 0.5rem;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.group:hover .row-actions,
+.row-actions:focus-within,
+.row-actions.is-pinned {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .row-actions {
+    position: static;
+    transform: none;
+    opacity: 1;
+    background: none;
+    padding: 0;
+  }
+}
+
 /* film-reel cursor for spin affordances */
 .cursor-reel {
   cursor:

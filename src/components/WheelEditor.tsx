@@ -184,10 +184,8 @@ export default function WheelEditor({
                     </button>
                   )}
                 </span>
-                {/* actions float over the row so they don't steal width */}
-                <span
-                  className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[linear-gradient(90deg,transparent,#201913_26%)] py-0.5 pl-8 pr-0.5 transition-opacity focus-within:opacity-100 ${s.muted ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                >
+                {/* actions float over the row on desktop, sit inline on touch */}
+                <span className={`row-actions ${s.muted ? 'is-pinned' : ''}`}>
                   {isFilter && (
                     <button
                       className="btn-ghost btn !p-1.5"
