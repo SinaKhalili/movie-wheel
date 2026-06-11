@@ -14,7 +14,10 @@ export default function Footer() {
         <a href="https://sina.town" target="_blank" rel="noreferrer">
           sina.town
         </a>{' '}
-        :^)
+        :^) — open source on{' '}
+        <a href="https://github.com/SinaKhalili/movie-wheel" target="_blank" rel="noreferrer">
+          GitHub
+        </a>
       </p>
       <p className="mb-0 mt-2 text-xs text-[var(--ink-faint)]">
         Film data from{' '}
