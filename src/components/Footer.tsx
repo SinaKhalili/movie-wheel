@@ -2,19 +2,19 @@ export default function Footer() {
   return (
     <footer className="border-t border-[var(--line)] px-4 py-8 text-center">
       <p className="mb-0 mt-0 text-sm text-[var(--ink-dim)]">
-        Made by{' '}
+        made with 📹 by{' '}
         <a href="https://sina.town" target="_blank" rel="noreferrer">
-          Sina K.
+          sina k.
         </a>{' '}
-        — if you like this, you might also like{' '}
+        if you like this, you might also like{' '}
         <a href="https://kino.sina.town" target="_blank" rel="noreferrer">
           kino.sina.town
-        </a>
-        . More projects at{' '}
+        </a>{' '}
+        or other projects at{' '}
         <a href="https://sina.town" target="_blank" rel="noreferrer">
           sina.town
-        </a>
-        .
+        </a>{' '}
+        :^)
       </p>
       <p className="mb-0 mt-2 text-xs text-[var(--ink-faint)]">
         Film data from{' '}
