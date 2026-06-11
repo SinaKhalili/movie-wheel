@@ -21,6 +21,4 @@ export const DEFAULT_SLICES: Slice[] = [
   // film ids are tmdb-derived (`t<id>`) — 843 is In the Mood for Love
   { id: uid(), type: 'film', filmId: 't843' },
   { id: uid(), type: 'filter', label: 'Kurosawa', conditions: [{ kind: 'director', directors: ['Akira Kurosawa'] }] },
-  { id: uid(), type: 'text', text: 'Dealer’s choice' },
-  { id: uid(), type: 'text', text: 'Rewatch an old favorite' },
 ]

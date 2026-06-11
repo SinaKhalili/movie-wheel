@@ -164,21 +164,23 @@ export default function WheelEditor({
                   {isFilter && <SlidersHorizontal size={14} />}
                 </span>
                 <span
-                  className={`flex min-w-0 flex-1 items-baseline gap-2 truncate text-sm ${s.muted ? 'line-through decoration-[rgba(240,230,210,0.35)]' : ''}`}
+                  className={`flex min-w-0 flex-1 items-baseline gap-2 text-sm ${s.muted ? 'line-through decoration-[rgba(240,230,210,0.35)]' : ''}`}
                 >
-                  <span className="truncate" title={sliceLabel(s, films)}>
+                  <span className="min-w-0 flex-1 truncate" title={sliceLabel(s, films)}>
                     {sliceLabel(s, films)}
                   </span>
                   {isCatalogSlice && (
-                    <span className="flex-shrink-0 text-xs text-[var(--gold)]">whole catalog</span>
+                    <span className="flex-shrink-0 whitespace-nowrap text-xs text-[var(--gold)]">
+                      whole catalog
+                    </span>
                   )}
                   {matched != null && (
                     <button
-                      className={`flex-shrink-0 text-xs underline decoration-dotted underline-offset-2 ${matched.length === 0 ? 'text-[#c96a5a]' : 'text-[var(--ink-faint)] hover:text-[var(--gold-bright)]'}`}
+                      className={`flex-shrink-0 whitespace-nowrap text-xs underline decoration-dotted underline-offset-2 ${matched.length === 0 ? 'text-[#c96a5a]' : 'text-[var(--ink-faint)] hover:text-[var(--gold-bright)]'}`}
                       onClick={() => setExpandedId(expanded ? null : s.id)}
                       title={expanded ? 'Hide matches' : 'Show the matching films'}
                     >
-                      {matched.length} match{matched.length === 1 ? '' : 'es'}
+                      {matched.length.toLocaleString()} match{matched.length === 1 ? '' : 'es'}
                     </button>
                   )}
                 </span>
