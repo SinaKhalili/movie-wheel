@@ -149,7 +149,7 @@ export default function WheelEditor({
           const dotColor = s.muted ? 'rgba(110,98,78,0.5)' : sliceColor(activeIdx, liveCount)
           return (
             <li key={s.id} className={s.muted ? 'opacity-55' : undefined}>
-              <div className="group flex items-center gap-2.5 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:border-[var(--line)] hover:bg-black/20">
+              <div className="group relative flex items-center gap-2.5 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:border-[var(--line)] hover:bg-black/20">
                 <span
                   className="h-3 w-3 flex-shrink-0 rounded-full"
                   style={{
@@ -184,33 +184,38 @@ export default function WheelEditor({
                     </button>
                   )}
                 </span>
-                {isFilter && (
+                {/* actions float over the row so they don't steal width */}
+                <span
+                  className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[linear-gradient(90deg,transparent,#201913_26%)] py-0.5 pl-8 pr-0.5 transition-opacity focus-within:opacity-100 ${s.muted ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                >
+                  {isFilter && (
+                    <button
+                      className="btn-ghost btn !p-1.5"
+                      onClick={() => editFilter(s)}
+                      disabled={disabled}
+                      aria-label={`Edit category ${s.label}`}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
                   <button
-                    className="btn-ghost btn !p-1.5 opacity-0 group-hover:opacity-100"
-                    onClick={() => editFilter(s)}
+                    className="btn-ghost btn !p-1.5"
+                    onClick={() => toggleMute(s.id)}
                     disabled={disabled}
-                    aria-label={`Edit category ${s.label}`}
+                    title={s.muted ? 'Unmute — back on the wheel' : 'Mute — keep it, skip it on the wheel'}
+                    aria-label={`${s.muted ? 'Unmute' : 'Mute'} ${sliceLabel(s, films)}`}
                   >
-                    <Pencil size={13} />
+                    {s.muted ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
-                )}
-                <button
-                  className={`btn-ghost btn !p-1.5 ${s.muted ? '' : 'opacity-0 group-hover:opacity-100'}`}
-                  onClick={() => toggleMute(s.id)}
-                  disabled={disabled}
-                  title={s.muted ? 'Unmute — back on the wheel' : 'Mute — keep it, skip it on the wheel'}
-                  aria-label={`${s.muted ? 'Unmute' : 'Mute'} ${sliceLabel(s, films)}`}
-                >
-                  {s.muted ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-                <button
-                  className="btn-ghost btn !p-1.5 opacity-0 group-hover:opacity-100"
-                  onClick={() => remove(s.id)}
-                  disabled={disabled}
-                  aria-label={`Remove ${sliceLabel(s, films)}`}
-                >
-                  <X size={14} />
-                </button>
+                  <button
+                    className="btn-ghost btn !p-1.5"
+                    onClick={() => remove(s.id)}
+                    disabled={disabled}
+                    aria-label={`Remove ${sliceLabel(s, films)}`}
+                  >
+                    <X size={14} />
+                  </button>
+                </span>
               </div>
               {expanded && (
                 <ul className="m-0 mt-1 max-h-56 list-none overflow-y-auto rounded-lg border border-[var(--line)] bg-black/25 p-2">
