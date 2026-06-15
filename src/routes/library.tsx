@@ -147,7 +147,7 @@ function LibraryPage() {
     const added = Object.values(summary).reduce((n, s) => n + s.added, 0)
     setSync({
       stage: 'done',
-      message: `Lists synced: ${added} films added (TSPDT ${summary.tspdt.added}, Criterion ${summary.criterion.added}, S&S ${summary.ss2022.added}, AFI ${summary.afi.added}).`,
+      message: `Lists synced: ${added} films added (TSPDT ${summary.tspdt.added}, Criterion ${summary.criterion.added}, S&S ${summary.ss2022.added}, AFI ${summary.afi.added}, Bottom 200 ${summary.worst200.added}).`,
     })
   }
 

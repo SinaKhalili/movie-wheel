@@ -3,6 +3,7 @@ import ssRaw from '../data/ss2022.json'
 import afiRaw from '../data/afi100.json'
 import criterionRaw from '../data/criterion.json'
 import festivalsRaw from '../data/festivals.json'
+import worstRaw from '../data/worst200.json'
 import type { Film } from './types'
 
 /**
@@ -20,6 +21,7 @@ const TSPDT = tspdtRaw as Required<Pick<ListEntry, 'rank' | 'title' | 'year' | '
 const SS2022 = ssRaw as ListEntry[]
 const AFI = afiRaw as ListEntry[]
 const CRITERION = criterionRaw as ListEntry[]
+const WORST200 = worstRaw as ListEntry[]
 const FESTIVALS = festivalsRaw as Record<string, ListEntry[]>
 
 function norm(s: string): string {
@@ -91,7 +93,7 @@ export type MergeSummary = Record<string, { added: number; matched: number }>
 const FESTIVAL_TAGS = ['cannes', 'berlin', 'venice', 'tiff', 'sundance']
 
 export function mergeAllLists(films: Film[]): { films: Film[]; summary: MergeSummary } {
-  const managed = ['tspdt', 'ss2022', 'afi', 'criterion', ...FESTIVAL_TAGS]
+  const managed = ['tspdt', 'ss2022', 'afi', 'criterion', 'worst200', ...FESTIVAL_TAGS]
   const next: Film[] = films.map((f) => ({
     ...f,
     tspdtRank: undefined,
@@ -103,6 +105,7 @@ export function mergeAllLists(films: Film[]): { films: Film[]; summary: MergeSum
     ss2022: mergeList(next, SS2022, 'ss2022'),
     afi: mergeList(next, AFI, 'afi'),
     criterion: mergeList(next, CRITERION, 'criterion'),
+    worst200: mergeList(next, WORST200, 'worst200'),
   }
   for (const tag of FESTIVAL_TAGS) {
     summary[tag] = mergeList(next, FESTIVALS[tag] ?? [], tag)

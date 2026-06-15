@@ -48,6 +48,7 @@ export const LISTS: Registry[] = [
   { id: 'ss2022', name: 'Sight & Sound 2022' },
   { id: 'criterion', name: 'Criterion Collection' },
   { id: 'afi', name: 'AFI 100' },
+  { id: 'worst200', name: 'Bottom 200' },
   { id: 'cannes', name: 'Palme d’Or' },
   { id: 'berlin', name: 'Golden Bear' },
   { id: 'venice', name: 'Golden Lion' },
