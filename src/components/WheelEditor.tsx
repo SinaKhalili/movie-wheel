@@ -130,12 +130,15 @@ export default function WheelEditor({
     setAiError(null)
     setAiResult(null)
     setAiBlurb(null)
+    // one id per "describe" action groups the blurb + pick calls into a single
+    // Langfuse session, so both LLM calls for a prompt show up together
+    const sessionId = uid()
     // cheap flavor text runs alongside the real (slower) pick — fills the wait
-    void aiCategoryBlurb({ data: { prompt } })
+    void aiCategoryBlurb({ data: { prompt, sessionId } })
       .then((b) => b && setAiBlurb(b))
       .catch(() => {})
     try {
-      const result = await aiPickFilms({ data: { prompt, region, count: 12 } })
+      const result = await aiPickFilms({ data: { prompt, region, count: 12, sessionId } })
       if (result.films.length === 0) {
         setAiError('Couldn’t ground any films for that — try rephrasing.')
         return

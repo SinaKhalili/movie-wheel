@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { mapProviders, PROVIDER_IDS, tmdbFetch } from './tmdb-core'
+import { logTrace, openaiUsage, type Usage } from './langfuse'
 import type { Film } from './types'
 
 function key(): string {
@@ -162,8 +163,16 @@ const PICK_SCHEMA = {
   required: ['label', 'films'],
 }
 
+type Proposal = {
+  label: string
+  films: { title: string; year: number }[]
+  usage?: Usage
+  startTime: string
+  endTime: string
+}
+
 /** Ask the model for candidate films matching a free-text category. */
-async function proposeFilms(prompt: string, count: number): Promise<{ label: string; films: { title: string; year: number }[] }> {
+async function proposeFilms(prompt: string, count: number): Promise<Proposal> {
   const system =
     'You curate themed movie lists. Given a category, return real films that fit it, ' +
     'drawing on your full film knowledge — do not limit yourself to famous titles. ' +
@@ -171,6 +180,7 @@ async function proposeFilms(prompt: string, count: number): Promise<{ label: str
     'Spread across eras and countries when the category allows. Return only the JSON.'
   const user = `Category: ${prompt}\n\nReturn about ${Math.ceil(count * 1.6)} films (we drop any that fail lookup).`
 
+  const startTime = new Date().toISOString()
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { authorization: `Bearer ${openaiKey()}`, 'content-type': 'application/json' },
@@ -186,10 +196,12 @@ async function proposeFilms(prompt: string, count: number): Promise<{ label: str
     }),
   })
   if (!res.ok) throw new Error(`openai ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+  const data = (await res.json()) as { choices?: { message?: { content?: string } }[]; usage?: unknown }
+  const endTime = new Date().toISOString()
   const content = data.choices?.[0]?.message?.content
   if (!content) throw new Error('openai: empty content')
-  return JSON.parse(content)
+  const parsed = JSON.parse(content) as { label: string; films: { title: string; year: number }[] }
+  return { ...parsed, usage: openaiUsage(data.usage), startTime, endTime }
 }
 
 /** Ground one proposed title against TMDB → a real film with poster, director, services. */
@@ -235,11 +247,12 @@ async function groundFilm(
 const BLURB_MODEL = 'gpt-5.4' // swap to a mini/nano model here if your account has one
 
 export const aiCategoryBlurb = createServerFn({ method: 'POST' })
-  .inputValidator((d: { prompt: string }) => d)
+  .inputValidator((d: { prompt: string; sessionId?: string }) => d)
   .handler(async ({ data }): Promise<string> => {
     const prompt = data.prompt.trim()
     if (!prompt) return ''
     try {
+      const startTime = new Date().toISOString()
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { authorization: `Bearer ${openaiKey()}`, 'content-type': 'application/json' },
@@ -258,8 +271,31 @@ export const aiCategoryBlurb = createServerFn({ method: 'POST' })
         }),
       })
       if (!res.ok) return ''
-      const json = (await res.json()) as { choices?: { message?: { content?: string } }[] }
-      return json.choices?.[0]?.message?.content?.trim() ?? ''
+      const json = (await res.json()) as { choices?: { message?: { content?: string } }[]; usage?: unknown }
+      const endTime = new Date().toISOString()
+      const blurb = json.choices?.[0]?.message?.content?.trim() ?? ''
+      await logTrace({
+        name: 'ai-category-blurb',
+        sessionId: data.sessionId,
+        tags: ['describe-category'],
+        input: prompt,
+        output: blurb,
+        startTime,
+        endTime,
+        generations: [
+          {
+            name: 'category-blurb',
+            model: BLURB_MODEL,
+            input: { category: prompt },
+            output: blurb,
+            usage: openaiUsage(json.usage),
+            startTime,
+            endTime,
+            metadata: { reasoning_effort: 'low' },
+          },
+        ],
+      })
+      return blurb
     } catch {
       return ''
     }
@@ -273,15 +309,17 @@ export type AiPick = { label: string; films: Film[] }
  * return films carrying real posters + streaming availability for the region.
  */
 export const aiPickFilms = createServerFn({ method: 'POST' })
-  .inputValidator((d: { prompt: string; region: string; count?: number }) => d)
+  .inputValidator((d: { prompt: string; region: string; count?: number; sessionId?: string }) => d)
   .handler(async ({ data }): Promise<AiPick> => {
     const prompt = data.prompt.trim()
     if (!prompt) return { label: '', films: [] }
     const region = /^[A-Z]{2}$/.test(data.region) ? data.region : 'CA'
     const count = Math.min(Math.max(data.count ?? 12, 1), 24)
 
-    const { label, films: candidates } = await proposeFilms(prompt, count)
+    const proposal = await proposeFilms(prompt, count)
+    const candidates = proposal.films
 
+    const groundStart = new Date().toISOString()
     const tmdbKey = key()
     const resolved = await Promise.all(
       candidates.map((c) => groundFilm(tmdbKey, region, c).catch(() => null)),
@@ -296,5 +334,46 @@ export const aiPickFilms = createServerFn({ method: 'POST' })
       films.push(f)
       if (films.length >= count) break
     }
-    return { label: label || prompt, films }
+    const groundEnd = new Date().toISOString()
+    const result: AiPick = { label: proposal.label || prompt, films }
+
+    // Trace: the LLM proposal (generation) + TMDB grounding (span) under one trace.
+    await logTrace({
+      name: 'ai-pick-films',
+      sessionId: data.sessionId,
+      tags: ['describe-category'],
+      input: prompt,
+      output: { label: result.label, films: films.map((f) => `${f.title} (${f.year})`) },
+      metadata: {
+        region,
+        requested: count,
+        proposed: candidates.length,
+        grounded: films.length,
+      },
+      startTime: proposal.startTime,
+      endTime: groundEnd,
+      generations: [
+        {
+          name: 'propose-films',
+          model: OPENAI_MODEL,
+          input: { category: prompt },
+          output: { label: proposal.label, films: candidates },
+          usage: proposal.usage,
+          startTime: proposal.startTime,
+          endTime: proposal.endTime,
+          metadata: { reasoning_effort: 'medium' },
+        },
+      ],
+      spans: [
+        {
+          name: 'tmdb-grounding',
+          input: { candidates: candidates.length },
+          output: { grounded: films.length, dropped: candidates.length - films.length },
+          startTime: groundStart,
+          endTime: groundEnd,
+        },
+      ],
+    })
+
+    return result
   })
