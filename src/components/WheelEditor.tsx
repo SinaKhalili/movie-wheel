@@ -349,12 +349,6 @@ export default function WheelEditor({
             </li>
           )
         })}
-        {slices.length === 0 && (
-          <li className="rounded-lg border border-dashed border-[var(--line)] px-3 py-6 text-center text-sm text-[var(--ink-dim)]">
-            Empty wheel — add a category, a specific film, or some text below. Land on a
-            category and a subwheel spins.
-          </li>
-        )}
       </ul>
 
       <div className="mt-4 border-t border-[var(--line)] pt-4">

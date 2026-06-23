@@ -361,13 +361,6 @@ function SpinPage() {
               aria-label="Spin the wheel"
               title="Spin"
             />
-            {frame.slices.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <p className="max-w-[60%] text-center text-[var(--ink-dim)]">
-                  Add films, wildcards, or filters to the lineup →
-                </p>
-              </div>
-            )}
             {zapping && (
               <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
                 <span className="marquee-pop animate-pulse rounded-full border border-[var(--line-strong)] bg-black/85 px-4 py-2 text-sm font-semibold text-[var(--gold-bright)] shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
