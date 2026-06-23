@@ -1,10 +1,17 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
-import { PROVIDER_IDS, tmdbFetch } from './tmdb-core'
+import { mapProviders, PROVIDER_IDS, tmdbFetch } from './tmdb-core'
+import type { Film } from './types'
 
 function key(): string {
   const k = process.env.TMDB_API_KEY
   if (!k) throw new Error('TMDB_API_KEY is not set (add it to .dev.vars locally, or `wrangler secret put TMDB_API_KEY` for deploys)')
+  return k
+}
+
+function openaiKey(): string {
+  const k = process.env.OPENAI_API_KEY
+  if (!k) throw new Error('OPENAI_API_KEY is not set (add it to .dev.vars locally, or `wrangler secret put OPENAI_API_KEY` for deploys)')
   return k
 }
 
@@ -123,4 +130,171 @@ export const catalogSample = createServerFn({ method: 'GET' })
       if (films.length >= data.count) break
     }
     return { total, films }
+  })
+
+// ── AI-described categories ──────────────────────────────────────────────
+// An LLM turns a natural-language category ("so-bad-it's-good sci-fi",
+// "movies about grief") into a list of real films. The model proposes titles
+// from its own knowledge — not limited to our library — and every proposal is
+// grounded through TMDB before it can reach the wheel: a title that doesn't
+// resolve to a real movie is dropped, so nothing hallucinated slips on.
+
+const OPENAI_MODEL = 'gpt-5.4'
+
+const PICK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    label: { type: 'string', description: 'A short, punchy wheel label for the category (≤ 32 chars).' },
+    films: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string', description: 'The exact film title as it would appear on TMDB.' },
+          year: { type: 'integer', description: 'Release year (best guess if unsure).' },
+        },
+        required: ['title', 'year'],
+      },
+    },
+  },
+  required: ['label', 'films'],
+}
+
+/** Ask the model for candidate films matching a free-text category. */
+async function proposeFilms(prompt: string, count: number): Promise<{ label: string; films: { title: string; year: number }[] }> {
+  const system =
+    'You curate themed movie lists. Given a category, return real films that fit it, ' +
+    'drawing on your full film knowledge — do not limit yourself to famous titles. ' +
+    'Prefer precise, real titles with correct release years so they can be looked up. ' +
+    'Spread across eras and countries when the category allows. Return only the JSON.'
+  const user = `Category: ${prompt}\n\nReturn about ${Math.ceil(count * 1.6)} films (we drop any that fail lookup).`
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${openaiKey()}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      response_format: { type: 'json_schema', json_schema: { name: 'film_picks', strict: true, schema: PICK_SCHEMA } },
+      max_completion_tokens: 6000,
+      reasoning_effort: 'medium',
+    }),
+  })
+  if (!res.ok) throw new Error(`openai ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+  const content = data.choices?.[0]?.message?.content
+  if (!content) throw new Error('openai: empty content')
+  return JSON.parse(content)
+}
+
+/** Ground one proposed title against TMDB → a real film with poster, director, services. */
+async function groundFilm(
+  tmdbKey: string,
+  region: string,
+  cand: { title: string; year: number },
+): Promise<Film | null> {
+  const exact = await tmdbFetch(tmdbKey, '/search/movie', {
+    query: cand.title,
+    primary_release_year: String(cand.year),
+  })
+  let hit = exact.results?.[0]
+  if (!hit) {
+    // festival vs wide-release years differ by a year sometimes
+    const loose = await tmdbFetch(tmdbKey, '/search/movie', { query: cand.title })
+    hit = (loose.results ?? []).find((m: any) => {
+      const y = m.release_date ? Number(m.release_date.slice(0, 4)) : null
+      return y != null && Math.abs(y - cand.year) <= 1
+    })
+  }
+  if (!hit) return null
+
+  const m = await tmdbFetch(tmdbKey, `/movie/${hit.id}`, { append_to_response: 'credits,watch/providers' })
+  const directors = (m.credits?.crew ?? []).filter((c: any) => c.job === 'Director').map((c: any) => c.name)
+  const regional = m['watch/providers']?.results?.[region]
+  return {
+    id: `ai-t${m.id}`,
+    title: m.title,
+    year: m.release_date ? Number(m.release_date.slice(0, 4)) : cand.year,
+    director: directors.join(' & ') || 'Unknown',
+    country: m.production_countries?.[0]?.name ?? 'Unknown',
+    services: mapProviders(regional?.flatrate),
+    lists: [],
+    tmdbId: m.id,
+    poster: m.poster_path ?? undefined,
+  }
+}
+
+// A cheap, low-effort call that returns a couple of evocative sentences to
+// show *while* the (slower) grounded pick is being assembled — pure flavor, so
+// it fails soft to an empty string and never blocks the real work.
+const BLURB_MODEL = 'gpt-5.4' // swap to a mini/nano model here if your account has one
+
+export const aiCategoryBlurb = createServerFn({ method: 'POST' })
+  .inputValidator((d: { prompt: string }) => d)
+  .handler(async ({ data }): Promise<string> => {
+    const prompt = data.prompt.trim()
+    if (!prompt) return ''
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${openaiKey()}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: BLURB_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content:
+                "You're a witty, deeply-read film curator. The user names a category; reply with ONE short, vivid sentence riffing on it (max ~20 words). No lists, no preamble, no meta-talk about waiting — just the single remark.",
+            },
+            { role: 'user', content: prompt },
+          ],
+          max_completion_tokens: 700,
+          reasoning_effort: 'low',
+        }),
+      })
+      if (!res.ok) return ''
+      const json = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+      return json.choices?.[0]?.message?.content?.trim() ?? ''
+    } catch {
+      return ''
+    }
+  })
+
+export type AiPick = { label: string; films: Film[] }
+
+/**
+ * Turn a natural-language category into a grounded list of real films:
+ * the model proposes titles, TMDB resolves each one (dropping misses), and we
+ * return films carrying real posters + streaming availability for the region.
+ */
+export const aiPickFilms = createServerFn({ method: 'POST' })
+  .inputValidator((d: { prompt: string; region: string; count?: number }) => d)
+  .handler(async ({ data }): Promise<AiPick> => {
+    const prompt = data.prompt.trim()
+    if (!prompt) return { label: '', films: [] }
+    const region = /^[A-Z]{2}$/.test(data.region) ? data.region : 'CA'
+    const count = Math.min(Math.max(data.count ?? 12, 1), 24)
+
+    const { label, films: candidates } = await proposeFilms(prompt, count)
+
+    const tmdbKey = key()
+    const resolved = await Promise.all(
+      candidates.map((c) => groundFilm(tmdbKey, region, c).catch(() => null)),
+    )
+
+    // dedupe by tmdbId, keep order, cap at count
+    const seen = new Set<number>()
+    const films: Film[] = []
+    for (const f of resolved) {
+      if (!f || !f.tmdbId || seen.has(f.tmdbId)) continue
+      seen.add(f.tmdbId)
+      films.push(f)
+      if (films.length >= count) break
+    }
+    return { label: label || prompt, films }
   })

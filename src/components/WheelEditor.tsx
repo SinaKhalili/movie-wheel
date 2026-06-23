@@ -1,8 +1,9 @@
 import { Fragment, useMemo, useState } from 'react'
-import { Eye, EyeOff, Film as FilmIcon, Pencil, Plus, SlidersHorizontal, Type, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Film as FilmIcon, Loader2, Maximize2, Pencil, Plus, SlidersHorizontal, Sparkles, Type, X } from 'lucide-react'
 import type { Condition, ConditionKind, Film, Slice } from '../lib/types'
 import { uid } from '../lib/types'
-import { LISTS, SERVICES, distinctCountries, distinctDirectors } from '../lib/films'
+import { aiCategoryBlurb, aiPickFilms, type AiPick } from '../lib/api'
+import { LISTS, SERVICES, distinctCountries, distinctDirectors, serviceName } from '../lib/films'
 import { conditionSummary, matchFilms } from '../lib/filter'
 import Typeahead from './Typeahead'
 import { sliceColor } from './Wheel'
@@ -11,6 +12,7 @@ type Mode =
   | { kind: 'closed' }
   | { kind: 'film' }
   | { kind: 'text' }
+  | { kind: 'ai' }
   | {
       kind: 'filter'
       editingId: string | null
@@ -20,6 +22,16 @@ type Mode =
     }
 
 const CATALOG_KINDS: ConditionKind[] = ['service', 'year']
+
+const AI_EXAMPLES = [
+  'Iranian film festival classics',
+  'Lynchian films not directed by Lynch',
+  'so-bad-it’s-good 80s sci-fi',
+  'movies about grief',
+  'neon-soaked neo-noir',
+  'cozy rainy-day rewatches',
+  'surreal dreamlike cinema',
+]
 
 function emptyCondition(kind: ConditionKind): Condition {
   switch (kind) {
@@ -54,18 +66,28 @@ function sliceLabel(slice: Slice, films: Film[]): string {
 export default function WheelEditor({
   slices,
   films,
+  region,
   onChange,
+  onAddFilms,
   disabled,
 }: {
   slices: Slice[]
   films: Film[]
+  region: string
   onChange: (next: Slice[]) => void
+  onAddFilms: (films: Film[]) => void
   disabled: boolean
 }) {
   const [mode, setMode] = useState<Mode>({ kind: 'closed' })
   const [filmQuery, setFilmQuery] = useState('')
   const [textDraft, setTextDraft] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [aiDraft, setAiDraft] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [aiResult, setAiResult] = useState<AiPick | null>(null)
+  const [aiBlurb, setAiBlurb] = useState<string | null>(null)
+  const [detail, setDetail] = useState<Film | null>(null)
 
   const directors = useMemo(() => distinctDirectors(films), [films])
   const countries = useMemo(() => distinctCountries(films), [films])
@@ -96,6 +118,62 @@ export default function WheelEditor({
     onChange([...slices, { id: uid(), type: 'text', text }])
     setTextDraft('')
   }
+
+  // Describe a category in words → the model proposes films, TMDB grounds them.
+  // The grounded survivors are shown as a preview gallery first; nothing reaches
+  // the wheel until "Add to wheel" commits them as a tagged filter slice.
+  const runAi = async (override?: string) => {
+    const prompt = (override ?? aiDraft).trim()
+    if (!prompt || aiBusy) return
+    if (override) setAiDraft(override)
+    setAiBusy(true)
+    setAiError(null)
+    setAiResult(null)
+    setAiBlurb(null)
+    // cheap flavor text runs alongside the real (slower) pick — fills the wait
+    void aiCategoryBlurb({ data: { prompt } })
+      .then((b) => b && setAiBlurb(b))
+      .catch(() => {})
+    try {
+      const result = await aiPickFilms({ data: { prompt, region, count: 12 } })
+      if (result.films.length === 0) {
+        setAiError('Couldn’t ground any films for that — try rephrasing.')
+        return
+      }
+      setAiResult(result)
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : 'Something went wrong.')
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  const closeAi = () => {
+    setAiDraft('')
+    setAiResult(null)
+    setAiError(null)
+    setAiBlurb(null)
+    setMode({ kind: 'closed' })
+  }
+
+  const commitAi = () => {
+    if (!aiResult || aiResult.films.length === 0) return
+    const tag = `ai:${uid()}`
+    onAddFilms(aiResult.films.map((f) => ({ ...f, lists: [...f.lists, tag] })))
+    onChange([
+      ...slices,
+      {
+        id: uid(),
+        type: 'filter',
+        label: aiResult.label.trim() || aiDraft.trim(),
+        conditions: [{ kind: 'list', lists: [tag] }],
+      },
+    ])
+    closeAi()
+  }
+
+  const dropCandidate = (tmdbId?: number) =>
+    setAiResult((r) => (r ? { ...r, films: r.films.filter((f) => f.tmdbId !== tmdbId) } : r))
 
   const saveFilter = () => {
     if (mode.kind !== 'filter') return
@@ -163,27 +241,53 @@ export default function WheelEditor({
                   {s.type === 'text' && <Type size={14} />}
                   {isFilter && <SlidersHorizontal size={14} />}
                 </span>
-                <span
-                  className={`flex min-w-0 flex-1 items-baseline gap-2 text-sm ${s.muted ? 'line-through decoration-[rgba(240,230,210,0.35)]' : ''}`}
-                >
-                  <span className="min-w-0 flex-1 truncate" title={sliceLabel(s, films)}>
-                    {sliceLabel(s, films)}
-                  </span>
-                  {isCatalogSlice && (
-                    <span className="flex-shrink-0 whitespace-nowrap text-xs text-[var(--gold)]">
-                      whole catalog
+                {matched != null ? (
+                  <button
+                    type="button"
+                    className={`flex min-w-0 flex-1 items-baseline gap-2 text-left text-sm ${s.muted ? 'line-through decoration-[rgba(240,230,210,0.35)]' : ''}`}
+                    onClick={() => setExpandedId(expanded ? null : s.id)}
+                    title={expanded ? 'Hide films' : 'Show the films in this category'}
+                  >
+                    {expanded ? (
+                      <ChevronDown size={13} className="flex-shrink-0 self-center text-[var(--gold-bright)]" />
+                    ) : (
+                      <ChevronRight size={13} className="flex-shrink-0 self-center text-[var(--ink-faint)]" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate" title={sliceLabel(s, films)}>
+                      {sliceLabel(s, films)}
                     </span>
-                  )}
-                  {matched != null && (
-                    <button
-                      className={`flex-shrink-0 whitespace-nowrap text-xs underline decoration-dotted underline-offset-2 ${matched.length === 0 ? 'text-[#c96a5a]' : 'text-[var(--ink-faint)] hover:text-[var(--gold-bright)]'}`}
-                      onClick={() => setExpandedId(expanded ? null : s.id)}
-                      title={expanded ? 'Hide matches' : 'Show the matching films'}
+                    <span
+                      className={`flex-shrink-0 whitespace-nowrap text-xs ${matched.length === 0 ? 'text-[#c96a5a]' : expanded ? 'text-[var(--gold-bright)]' : 'text-[var(--ink-faint)]'}`}
                     >
-                      {matched.length.toLocaleString()} match{matched.length === 1 ? '' : 'es'}
-                    </button>
-                  )}
-                </span>
+                      {matched.length.toLocaleString()} film{matched.length === 1 ? '' : 's'}
+                    </span>
+                  </button>
+                ) : s.type === 'film' ? (
+                  <button
+                    type="button"
+                    className={`flex min-w-0 flex-1 items-baseline gap-2 text-left text-sm ${s.muted ? 'line-through decoration-[rgba(240,230,210,0.35)]' : ''}`}
+                    onClick={() => {
+                      const f = films.find((x) => x.id === s.filmId)
+                      if (f) setDetail(f)
+                    }}
+                    title="View film details"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{sliceLabel(s, films)}</span>
+                  </button>
+                ) : (
+                  <span
+                    className={`flex min-w-0 flex-1 items-baseline gap-2 text-sm ${s.muted ? 'line-through decoration-[rgba(240,230,210,0.35)]' : ''}`}
+                  >
+                    <span className="min-w-0 flex-1 truncate" title={sliceLabel(s, films)}>
+                      {sliceLabel(s, films)}
+                    </span>
+                    {isCatalogSlice && (
+                      <span className="flex-shrink-0 whitespace-nowrap text-xs text-[var(--gold)]">
+                        whole catalog
+                      </span>
+                    )}
+                  </span>
+                )}
                 {/* actions float over the row on desktop, sit inline on touch */}
                 <span className={`row-actions ${s.muted ? 'is-pinned' : ''}`}>
                   {isFilter && (
@@ -218,8 +322,16 @@ export default function WheelEditor({
               {expanded && (
                 <ul className="m-0 mt-1 max-h-56 list-none overflow-y-auto rounded-lg border border-[var(--line)] bg-black/25 p-2">
                   {matched.slice(0, 150).map((f) => (
-                    <li key={f.id} className="truncate px-2 py-0.5 text-xs text-[var(--ink-dim)]">
-                      {f.title} <span className="text-[var(--ink-faint)]">({f.year})</span>
+                    <li key={f.id}>
+                      <button
+                        type="button"
+                        className="flex w-full items-baseline gap-2 truncate rounded px-2 py-0.5 text-left text-xs text-[var(--ink-dim)] transition-colors hover:bg-[rgba(217,154,61,0.12)] hover:text-[var(--ink)]"
+                        onClick={() => setDetail(f)}
+                        title={`${f.title} (${f.year}) — view details`}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{f.title}</span>
+                        <span className="flex-shrink-0 text-[var(--ink-faint)]">{f.year}</span>
+                      </button>
                     </li>
                   ))}
                   {matched.length > 150 && (
@@ -245,40 +357,52 @@ export default function WheelEditor({
         )}
       </ul>
 
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--line)] pt-4">
+      <div className="mt-4 border-t border-[var(--line)] pt-4">
+        {/* AI is the headline way to fill the wheel — big, glowing, first */}
         <button
-          className={`btn ${mode.kind === 'filter' ? 'btn-solid' : ''}`}
-          onClick={() =>
-            setMode(
-              mode.kind === 'filter'
-                ? { kind: 'closed' }
-                : {
-                  kind: 'filter',
-                  editingId: null,
-                  label: '',
-                  conditions: [emptyCondition('service')],
-                  scope: 'library',
-                },
-            )
-          }
+          className={`btn btn-solid w-full !py-2.5 text-[0.95rem] ${mode.kind === 'ai' ? '' : 'ai-cta'}`}
+          onClick={() => (mode.kind === 'ai' ? closeAi() : setMode({ kind: 'ai' }))}
           disabled={disabled}
         >
-          <SlidersHorizontal size={14} /> Category
+          <Sparkles size={16} /> Describe a category
         </button>
-        <button
-          className={`btn ${mode.kind === 'film' ? 'btn-solid' : ''}`}
-          onClick={() => setMode(mode.kind === 'film' ? { kind: 'closed' } : { kind: 'film' })}
-          disabled={disabled}
-        >
-          <FilmIcon size={14} /> Specific film
-        </button>
-        <button
-          className={`btn ${mode.kind === 'text' ? 'btn-solid' : ''}`}
-          onClick={() => setMode(mode.kind === 'text' ? { kind: 'closed' } : { kind: 'text' })}
-          disabled={disabled}
-        >
-          <Type size={14} /> Text
-        </button>
+
+        <div className="mt-2.5 flex items-center gap-1.5">
+          <span className="mr-0.5 flex-shrink-0 text-[11px] text-[var(--ink-faint)]">or</span>
+          <button
+            className={`btn btn-ghost !gap-1 !px-2 !py-1 text-[11px] ${mode.kind === 'filter' ? 'btn-solid' : ''}`}
+            onClick={() =>
+              setMode(
+                mode.kind === 'filter'
+                  ? { kind: 'closed' }
+                  : {
+                    kind: 'filter',
+                    editingId: null,
+                    label: '',
+                    conditions: [emptyCondition('service')],
+                    scope: 'library',
+                  },
+              )
+            }
+            disabled={disabled}
+          >
+            <SlidersHorizontal size={12} /> Category
+          </button>
+          <button
+            className={`btn btn-ghost !gap-1 !px-2 !py-1 text-[11px] ${mode.kind === 'film' ? 'btn-solid' : ''}`}
+            onClick={() => setMode(mode.kind === 'film' ? { kind: 'closed' } : { kind: 'film' })}
+            disabled={disabled}
+          >
+            <FilmIcon size={12} /> Film
+          </button>
+          <button
+            className={`btn btn-ghost !gap-1 !px-2 !py-1 text-[11px] ${mode.kind === 'text' ? 'btn-solid' : ''}`}
+            onClick={() => setMode(mode.kind === 'text' ? { kind: 'closed' } : { kind: 'text' })}
+            disabled={disabled}
+          >
+            <Type size={12} /> Text
+          </button>
+        </div>
       </div>
 
       {mode.kind === 'film' && (
@@ -315,6 +439,156 @@ export default function WheelEditor({
         </div>
       )}
 
+      {mode.kind === 'ai' && (
+        <div className="mt-3">
+          {!aiBusy && !aiResult && (
+            <>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void runAi()
+                }}
+              >
+                <textarea
+                  className="ai-field"
+                  rows={3}
+                  placeholder={
+                    'Describe a category in your own words…\ne.g. “so-bad-it’s-good 80s sci-fi” or “quiet films about loneliness in big cities”'
+                  }
+                  value={aiDraft}
+                  onChange={(e) => setAiDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault()
+                      void runAi()
+                    }
+                  }}
+                  autoFocus
+                />
+                {aiError && (
+                  <p className="mb-0 mt-2 truncate text-xs text-[#c96a5a]">{aiError}</p>
+                )}
+                <button
+                  type="submit"
+                  className="btn btn-solid mt-2 w-full"
+                  disabled={!aiDraft.trim()}
+                >
+                  <Sparkles size={14} /> Pick films
+                </button>
+              </form>
+
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {AI_EXAMPLES.map((ex) => (
+                  <button key={ex} type="button" className="chip" onClick={() => void runAi(ex)}>
+                    {ex}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {aiBusy && (
+            <div className="mt-3">
+              <p className="ai-thinking m-0 text-sm font-medium leading-snug">
+                {aiBlurb || 'Conjuring a category…'}
+              </p>
+              <ul className="m-0 mt-3 grid list-none grid-cols-4 gap-2 p-0 sm:grid-cols-5">
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <li key={i} className="ai-skeleton aspect-[2/3]" />
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {!aiBusy && aiResult && (
+            <div className="mt-3">
+              {aiBlurb && (
+                <p className="mb-2 mt-0 text-xs italic leading-snug text-[var(--ink-dim)]">{aiBlurb}</p>
+              )}
+              <div className="mb-2 flex items-center gap-2">
+                <input
+                  className="field !py-1.5 text-sm"
+                  value={aiResult.label}
+                  onChange={(e) => setAiResult((r) => (r ? { ...r, label: e.target.value } : r))}
+                  aria-label="Category name"
+                />
+                <span className="flex-shrink-0 text-xs text-[var(--ink-faint)]">
+                  {aiResult.films.length} film{aiResult.films.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <ul className="m-0 grid max-h-72 list-none grid-cols-4 gap-2 overflow-y-auto p-0 sm:grid-cols-5">
+                {aiResult.films.map((f) => (
+                  <li key={f.tmdbId ?? f.id} className="group relative min-w-0">
+                    <button
+                      type="button"
+                      className="relative block aspect-[2/3] w-full overflow-hidden rounded-md border border-[var(--line)] bg-[var(--bg-raised)] transition-transform hover:scale-[1.03] hover:border-[var(--gold)]"
+                      onClick={() => setDetail(f)}
+                      title={`${f.title} (${f.year}) — view details`}
+                    >
+                      {f.poster ? (
+                        <img
+                          src={`https://image.tmdb.org/t/p/w185${f.poster}`}
+                          alt={`${f.title} poster`}
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-[var(--ink-faint)]">
+                          {f.title}
+                        </span>
+                      )}
+                      <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-t from-black/80 to-transparent pb-1 pt-3 text-[9px] font-semibold uppercase tracking-wide text-[var(--gold-bright)] opacity-0 transition-opacity group-hover:opacity-100">
+                        <Maximize2 size={10} /> Details
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1 z-10 rounded-full bg-black/70 p-0.5 text-[var(--ink)] opacity-0 transition-opacity hover:bg-black/90 group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        dropCandidate(f.tmdbId)
+                      }}
+                      aria-label={`Remove ${f.title}`}
+                    >
+                      <X size={12} />
+                    </button>
+                    <p className="m-0 mt-1 truncate text-[11px] leading-tight text-[var(--ink-dim)]" title={`${f.title} (${f.year})`}>
+                      {f.title}
+                    </p>
+                    <span className="text-[10px] text-[var(--ink-faint)]">{f.year}</span>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                className="ai-cta btn btn-solid mt-3 w-full !py-2.5 text-[0.95rem]"
+                onClick={commitAi}
+                disabled={aiResult.films.length === 0}
+              >
+                <Check size={16} /> Add {aiResult.films.length} to the wheel
+              </button>
+              <div className="mt-2 flex items-center justify-center gap-3 text-xs text-[var(--ink-faint)]">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 hover:text-[var(--gold-bright)]"
+                  onClick={() => void runAi()}
+                >
+                  <Loader2 size={12} /> Regenerate
+                </button>
+                <span aria-hidden>·</span>
+                <button
+                  type="button"
+                  className="hover:text-[var(--gold-bright)]"
+                  onClick={() => setAiResult(null)}
+                >
+                  Edit prompt
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {mode.kind === 'text' && (
         <form
           className="mt-3 flex gap-2"
@@ -346,7 +620,80 @@ export default function WheelEditor({
           onSave={saveFilter}
         />
       )}
+
+      {detail && <FilmDetail film={detail} onClose={() => setDetail(null)} />}
     </section>
+  )
+}
+
+function FilmDetail({ film, onClose }: { film: Film; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="card relative flex w-full max-w-md gap-4 p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="aspect-[2/3] w-32 flex-shrink-0 overflow-hidden rounded-md border border-[var(--line)] bg-[var(--bg-raised)]">
+          {film.poster ? (
+            <img
+              src={`https://image.tmdb.org/t/p/w342${film.poster}`}
+              alt={`${film.title} poster`}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <span className="flex h-full w-full items-center justify-center px-2 text-center text-xs text-[var(--ink-faint)]">
+              No poster
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="m-0 pr-6 text-lg font-bold leading-tight text-[var(--ink)]">
+            {film.title} <span className="font-normal text-[var(--ink-dim)]">({film.year})</span>
+          </h3>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+            <dt className="text-[var(--ink-faint)]">Director</dt>
+            <dd className="m-0 text-[var(--ink-dim)]">{film.director}</dd>
+            <dt className="text-[var(--ink-faint)]">Country</dt>
+            <dd className="m-0 text-[var(--ink-dim)]">{film.country}</dd>
+          </dl>
+          <div className="mt-3">
+            {film.services.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {film.services.map((s) => (
+                  <span key={s} className="chip is-on !cursor-default">
+                    {serviceName(s)}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="m-0 text-xs text-[var(--ink-faint)]">Not streaming in your region.</p>
+            )}
+          </div>
+          {film.tmdbId && (
+            <a
+              className="mt-3 inline-block text-xs text-[var(--gold)] underline decoration-dotted underline-offset-2 hover:text-[var(--gold-bright)]"
+              href={`https://www.themoviedb.org/movie/${film.tmdbId}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View on TMDB ↗
+            </a>
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn-ghost btn absolute right-2 top-2 !p-1.5"
+          onClick={onClose}
+          aria-label="Close details"
+        >
+          <X size={16} />
+        </button>
+      </div>
+    </div>
   )
 }
 

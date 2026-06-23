@@ -45,7 +45,8 @@ export function usePersisted<T>(
 
 // films key bumped whenever the shipped snapshot changes shape (v3: festival lists)
 export const FILMS_KEY = 'wheel.films.v3'
-export const SLICES_KEY = 'wheel.slices.v4'
+// v5: default lineup removed — wheels now start blank
+export const SLICES_KEY = 'wheel.slices.v5'
 export const MUTED_KEY = 'wheel.muted.v1'
 export const REGION_KEY = 'wheel.region.v1'
 

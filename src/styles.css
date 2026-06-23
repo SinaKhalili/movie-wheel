@@ -371,3 +371,102 @@ select.field {
   scrollbar-width: thin;
   scrollbar-color: rgba(217, 154, 61, 0.3) transparent;
 }
+
+/* ── AI category panel ──────────────────────────────────────────── */
+
+/* multi-line prompt box */
+.ai-field {
+  width: 100%;
+  resize: none;
+  min-height: 88px;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-raised);
+  color: var(--ink);
+  padding: 12px 14px;
+  font: inherit;
+  line-height: 1.45;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.ai-field::placeholder {
+  color: var(--ink-faint);
+}
+.ai-field:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(217, 154, 61, 0.12);
+}
+
+/* gradient-sheen "thinking…" text, like Claude/ChatGPT */
+@keyframes ai-sheen {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+.ai-thinking {
+  background: linear-gradient(
+    100deg,
+    var(--ink-faint) 30%,
+    var(--gold-bright) 50%,
+    var(--ink-faint) 70%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: ai-sheen 2.2s linear infinite;
+}
+
+/* skeleton poster cards with a sweeping shine */
+@keyframes ai-shine {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.ai-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+}
+.ai-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(242, 193, 120, 0.16),
+    transparent
+  );
+  animation: ai-shine 1.5s ease-in-out infinite;
+}
+
+/* the primary "Describe a category" CTA pulses a warm gold glow */
+@keyframes ai-cta-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(242, 193, 120, 0), 0 0 14px -5px rgba(242, 193, 120, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(242, 193, 120, 0.14), 0 0 26px -2px rgba(242, 193, 120, 0.85);
+  }
+}
+.ai-cta {
+  animation: ai-cta-glow 2.6s ease-in-out infinite;
+}
+.ai-cta:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-thinking,
+  .ai-skeleton::after,
+  .ai-cta {
+    animation: none;
+  }
+  .ai-thinking {
+    -webkit-text-fill-color: var(--gold-bright);
+    color: var(--gold-bright);
+  }
+}

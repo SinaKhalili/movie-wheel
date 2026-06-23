@@ -116,11 +116,23 @@ function buildRootFrame(slices: Slice[], films: Film[]): Frame {
 }
 
 function SpinPage() {
-  const [films] = useFilmLibrary()
+  const [films, setFilms] = useFilmLibrary()
   const [slices, setSlices, hydrated] = usePersisted<Slice[]>(SLICES_KEY, DEFAULT_SLICES)
   const [muted, setMuted] = usePersisted<boolean>(MUTED_KEY, false)
   const [region] = useRegion()
   const staleDays = useSnapshotAge() ?? 0
+
+  // Merge AI-grounded films into the library, unioning list tags on collisions.
+  const addFilms = (incoming: Film[]) => {
+    setFilms((prev) => {
+      const byId = new Map(prev.map((f) => [f.id, f]))
+      for (const f of incoming) {
+        const cur = byId.get(f.id)
+        byId.set(f.id, cur ? { ...cur, lists: [...new Set([...cur.lists, ...f.lists])] } : f)
+      }
+      return [...byId.values()]
+    })
+  }
 
   const rootFrame = useMemo(() => buildRootFrame(slices, films), [slices, films])
   const [subFrames, setSubFrames] = useState<Frame[]>([])
@@ -409,7 +421,14 @@ function SpinPage() {
         </section>
 
         {/* lineup editor */}
-        <WheelEditor slices={slices} films={films} onChange={setSlices} disabled={busy} />
+        <WheelEditor
+          slices={slices}
+          films={films}
+          region={region}
+          onChange={setSlices}
+          onAddFilms={addFilms}
+          disabled={busy}
+        />
       </div>
 
       {winner && (
