@@ -1,8 +1,8 @@
 import { Fragment, useMemo, useState } from 'react'
-import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Film as FilmIcon, Loader2, Maximize2, Pencil, Plus, SlidersHorizontal, Sparkles, Type, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Clapperboard, Eye, EyeOff, Film as FilmIcon, Loader2, Maximize2, Pencil, Plus, SlidersHorizontal, Sparkles, Tv, Type, X } from 'lucide-react'
 import type { Condition, ConditionKind, Film, Slice } from '../lib/types'
 import { uid } from '../lib/types'
-import { aiCategoryBlurb, aiPickFilms, type AiPick } from '../lib/api'
+import { aiCategoryBlurb, aiPickFilms, type AiPick, type Medium } from '../lib/api'
 import { LISTS, SERVICES, distinctCountries, distinctDirectors, serviceName } from '../lib/films'
 import { conditionSummary, matchFilms } from '../lib/filter'
 import Typeahead from './Typeahead'
@@ -31,6 +31,15 @@ const AI_EXAMPLES = [
   'neon-soaked neo-noir',
   'cozy rainy-day rewatches',
   'surreal dreamlike cinema',
+]
+
+const AI_TV_EXAMPLES = [
+  'prestige crime dramas',
+  'cozy British mysteries',
+  'mind-bending sci-fi series',
+  'workplace comedies that actually land',
+  'one-season wonders',
+  'slow-burn limited series',
 ]
 
 function emptyCondition(kind: ConditionKind): Condition {
@@ -86,6 +95,7 @@ export default function WheelEditor({
   const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
   const [aiResult, setAiResult] = useState<AiPick | null>(null)
+  const [aiMedium, setAiMedium] = useState<Medium>('movie')
   const [aiBlurb, setAiBlurb] = useState<string | null>(null)
   const [detail, setDetail] = useState<Film | null>(null)
 
@@ -133,12 +143,13 @@ export default function WheelEditor({
     // one id per "describe" action groups the blurb + pick calls into a single
     // Langfuse session, so both LLM calls for a prompt show up together
     const sessionId = uid()
+    const medium = aiMedium
     // cheap flavor text runs alongside the real (slower) pick — fills the wait
-    void aiCategoryBlurb({ data: { prompt, sessionId } })
+    void aiCategoryBlurb({ data: { prompt, medium, sessionId } })
       .then((b) => b && setAiBlurb(b))
       .catch(() => {})
     try {
-      const result = await aiPickFilms({ data: { prompt, region, count: 12, sessionId } })
+      const result = await aiPickFilms({ data: { prompt, region, count: 12, medium, sessionId } })
       if (result.films.length === 0) {
         setAiError('Couldn’t ground any films for that — try rephrasing.')
         return
@@ -440,6 +451,24 @@ export default function WheelEditor({
         <div className="mt-3">
           {!aiBusy && !aiResult && (
             <>
+              <div className="mb-2 inline-flex gap-1 rounded-lg border border-[var(--line)] p-0.5">
+                <button
+                  type="button"
+                  className={`btn !gap-1.5 !px-3 !py-1 text-xs ${aiMedium === 'movie' ? 'btn-solid' : 'btn-ghost'}`}
+                  onClick={() => setAiMedium('movie')}
+                  aria-pressed={aiMedium === 'movie'}
+                >
+                  <Clapperboard size={13} /> Movies
+                </button>
+                <button
+                  type="button"
+                  className={`btn !gap-1.5 !px-3 !py-1 text-xs ${aiMedium === 'tv' ? 'btn-solid' : 'btn-ghost'}`}
+                  onClick={() => setAiMedium('tv')}
+                  aria-pressed={aiMedium === 'tv'}
+                >
+                  <Tv size={13} /> TV
+                </button>
+              </div>
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -450,7 +479,9 @@ export default function WheelEditor({
                   className="ai-field"
                   rows={3}
                   placeholder={
-                    'Describe a category in your own words…\ne.g. “so-bad-it’s-good 80s sci-fi” or “quiet films about loneliness in big cities”'
+                    aiMedium === 'tv'
+                      ? 'Describe a category of shows…\ne.g. “prestige crime dramas” or “cozy British mysteries”'
+                      : 'Describe a category in your own words…\ne.g. “so-bad-it’s-good 80s sci-fi” or “quiet films about loneliness in big cities”'
                   }
                   value={aiDraft}
                   onChange={(e) => setAiDraft(e.target.value)}
@@ -470,12 +501,12 @@ export default function WheelEditor({
                   className="btn btn-solid mt-2 w-full"
                   disabled={!aiDraft.trim()}
                 >
-                  <Sparkles size={14} /> Pick films
+                  <Sparkles size={14} /> {aiMedium === 'tv' ? 'Pick shows' : 'Pick films'}
                 </button>
               </form>
 
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {AI_EXAMPLES.map((ex) => (
+                {(aiMedium === 'tv' ? AI_TV_EXAMPLES : AI_EXAMPLES).map((ex) => (
                   <button key={ex} type="button" className="chip" onClick={() => void runAi(ex)}>
                     {ex}
                   </button>
@@ -513,7 +544,7 @@ export default function WheelEditor({
                   {aiResult.films.length} film{aiResult.films.length === 1 ? '' : 's'}
                 </span>
               </div>
-              <ul className="m-0 grid max-h-72 list-none grid-cols-4 gap-2 overflow-y-auto p-0 sm:grid-cols-5">
+              <ul className="m-0 grid list-none grid-cols-4 gap-2 p-0 sm:grid-cols-5">
                 {aiResult.films.map((f) => (
                   <li key={f.tmdbId ?? f.id} className="group relative min-w-0">
                     <button
@@ -652,7 +683,7 @@ function FilmDetail({ film, onClose }: { film: Film; onClose: () => void }) {
             {film.title} <span className="font-normal text-[var(--ink-dim)]">({film.year})</span>
           </h3>
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-            <dt className="text-[var(--ink-faint)]">Director</dt>
+            <dt className="text-[var(--ink-faint)]">{film.mediaType === 'tv' ? 'Creator' : 'Director'}</dt>
             <dd className="m-0 text-[var(--ink-dim)]">{film.director}</dd>
             <dt className="text-[var(--ink-faint)]">Country</dt>
             <dd className="m-0 text-[var(--ink-dim)]">{film.country}</dd>
@@ -673,7 +704,7 @@ function FilmDetail({ film, onClose }: { film: Film; onClose: () => void }) {
           {film.tmdbId && (
             <a
               className="mt-3 inline-block text-xs text-[var(--gold)] underline decoration-dotted underline-offset-2 hover:text-[var(--gold-bright)]"
-              href={`https://www.themoviedb.org/movie/${film.tmdbId}`}
+              href={`https://www.themoviedb.org/${film.mediaType === 'tv' ? 'tv' : 'movie'}/${film.tmdbId}`}
               target="_blank"
               rel="noreferrer"
             >

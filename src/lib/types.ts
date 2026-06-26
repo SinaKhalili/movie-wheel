@@ -9,6 +9,8 @@ export type Film = {
   /** list ids, e.g. 'tspdt' */
   lists: string[]
   tmdbId?: number
+  /** 'tv' for TV-roulette picks; absent/undefined means a movie. */
+  mediaType?: 'tv'
   /** TMDB poster path, e.g. '/abc.jpg' */
   poster?: string
   /** position on the TSPDT 1,000 Greatest Films */

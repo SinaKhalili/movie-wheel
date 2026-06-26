@@ -495,20 +495,25 @@ function WinnerMarquee({
                     .join(' · ')}
                   {winner.film.tspdtRank != null && ` · TSPDT #${winner.film.tspdtRank}`}
                 </p>
-                {(winner.film.services.length > 0 || winner.film.lists.length > 0) && (
-                  <div className="mb-1 flex flex-wrap justify-center gap-1.5">
-                    {winner.film.services.map((s) => (
-                      <span key={s} className="chip is-on chip-static">
-                        {serviceName(s)}
-                      </span>
-                    ))}
-                    {winner.film.lists.map((l) => (
-                      <span key={l} className="chip chip-static">
-                        {listName(l)}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {(() => {
+                  // hide internal AI grouping tags (ai:<id>) — they aren't canon lists
+                  const lists = winner.film.lists.filter((l) => !l.startsWith('ai:'))
+                  if (winner.film.services.length === 0 && lists.length === 0) return null
+                  return (
+                    <div className="mb-1 flex flex-wrap justify-center gap-1.5">
+                      {winner.film.services.map((s) => (
+                        <span key={s} className="chip is-on chip-static">
+                          {serviceName(s)}
+                        </span>
+                      ))}
+                      {lists.map((l) => (
+                        <span key={l} className="chip chip-static">
+                          {listName(l)}
+                        </span>
+                      ))}
+                    </div>
+                  )
+                })()}
               </>
             )}
           </>

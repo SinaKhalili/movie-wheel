@@ -153,8 +153,8 @@ const PICK_SCHEMA = {
         type: 'object',
         additionalProperties: false,
         properties: {
-          title: { type: 'string', description: 'The exact film title as it would appear on TMDB.' },
-          year: { type: 'integer', description: 'Release year (best guess if unsure).' },
+          title: { type: 'string', description: 'The exact title as it would appear on TMDB.' },
+          year: { type: 'integer', description: 'Release / first-air year (best guess if unsure).' },
         },
         required: ['title', 'year'],
       },
@@ -162,6 +162,8 @@ const PICK_SCHEMA = {
   },
   required: ['label', 'films'],
 }
+
+export type Medium = 'movie' | 'tv'
 
 type Proposal = {
   label: string
@@ -171,14 +173,16 @@ type Proposal = {
   endTime: string
 }
 
-/** Ask the model for candidate films matching a free-text category. */
-async function proposeFilms(prompt: string, count: number): Promise<Proposal> {
+/** Ask the model for candidate films/shows matching a free-text category. */
+async function proposeFilms(prompt: string, count: number, medium: Medium): Promise<Proposal> {
+  const noun = medium === 'tv' ? 'TV shows' : 'films'
+  const yearHint = medium === 'tv' ? 'first-air-year' : 'release year'
   const system =
-    'You curate themed movie lists. Given a category, return real films that fit it, ' +
-    'drawing on your full film knowledge — do not limit yourself to famous titles. ' +
-    'Prefer precise, real titles with correct release years so they can be looked up. ' +
+    `You curate themed ${noun} lists. Given a category, return real ${noun} that fit it, ` +
+    'drawing on your full knowledge — do not limit yourself to famous titles. ' +
+    `Prefer precise, real titles with correct ${yearHint}s so they can be looked up. ` +
     'Spread across eras and countries when the category allows. Return only the JSON.'
-  const user = `Category: ${prompt}\n\nReturn about ${Math.ceil(count * 1.6)} films (we drop any that fail lookup).`
+  const user = `Category: ${prompt}\n\nReturn about ${Math.ceil(count * 1.6)} ${noun} (we drop any that fail lookup).`
 
   const startTime = new Date().toISOString()
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -204,8 +208,19 @@ async function proposeFilms(prompt: string, count: number): Promise<Proposal> {
   return { ...parsed, usage: openaiUsage(data.usage), startTime, endTime }
 }
 
-/** Ground one proposed title against TMDB → a real film with poster, director, services. */
+/** Ground one proposed title against TMDB → a real film/show with poster, credits, services. */
 async function groundFilm(
+  tmdbKey: string,
+  region: string,
+  cand: { title: string; year: number },
+  medium: Medium,
+): Promise<Film | null> {
+  return medium === 'tv'
+    ? groundTv(tmdbKey, region, cand)
+    : groundMovie(tmdbKey, region, cand)
+}
+
+async function groundMovie(
   tmdbKey: string,
   region: string,
   cand: { title: string; year: number },
@@ -241,16 +256,54 @@ async function groundFilm(
   }
 }
 
+async function groundTv(
+  tmdbKey: string,
+  region: string,
+  cand: { title: string; year: number },
+): Promise<Film | null> {
+  const exact = await tmdbFetch(tmdbKey, '/search/tv', {
+    query: cand.title,
+    first_air_date_year: String(cand.year),
+  })
+  let hit = exact.results?.[0]
+  if (!hit) {
+    const loose = await tmdbFetch(tmdbKey, '/search/tv', { query: cand.title })
+    hit = (loose.results ?? []).find((t: any) => {
+      const y = t.first_air_date ? Number(t.first_air_date.slice(0, 4)) : null
+      return y != null && Math.abs(y - cand.year) <= 1
+    })
+  }
+  if (!hit) return null
+
+  const t = await tmdbFetch(tmdbKey, `/tv/${hit.id}`, { append_to_response: 'watch/providers' })
+  const creators = (t.created_by ?? []).map((c: any) => c.name)
+  const regional = t['watch/providers']?.results?.[region]
+  return {
+    id: `ai-tv${t.id}`,
+    title: t.name,
+    year: t.first_air_date ? Number(t.first_air_date.slice(0, 4)) : cand.year,
+    director: creators.join(' & ') || 'Unknown',
+    country: t.production_countries?.[0]?.name ?? t.origin_country?.[0] ?? 'Unknown',
+    services: mapProviders(regional?.flatrate),
+    lists: [],
+    tmdbId: t.id,
+    mediaType: 'tv',
+    poster: t.poster_path ?? undefined,
+  }
+}
+
 // A cheap, low-effort call that returns a couple of evocative sentences to
 // show *while* the (slower) grounded pick is being assembled — pure flavor, so
 // it fails soft to an empty string and never blocks the real work.
 const BLURB_MODEL = 'gpt-5.4' // swap to a mini/nano model here if your account has one
 
 export const aiCategoryBlurb = createServerFn({ method: 'POST' })
-  .inputValidator((d: { prompt: string; sessionId?: string }) => d)
+  .inputValidator((d: { prompt: string; medium?: Medium; sessionId?: string }) => d)
   .handler(async ({ data }): Promise<string> => {
     const prompt = data.prompt.trim()
     if (!prompt) return ''
+    const medium: Medium = data.medium === 'tv' ? 'tv' : 'movie'
+    const persona = medium === 'tv' ? 'TV critic' : 'film curator'
     try {
       const startTime = new Date().toISOString()
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -262,7 +315,7 @@ export const aiCategoryBlurb = createServerFn({ method: 'POST' })
             {
               role: 'system',
               content:
-                "You're a witty, deeply-read film curator. The user names a category; reply with ONE short, vivid sentence riffing on it (max ~20 words). No lists, no preamble, no meta-talk about waiting — just the single remark.",
+                `You're a witty, deeply-read ${persona}. The user names a category; reply with ONE short, vivid sentence riffing on it (max ~20 words). No lists, no preamble, no meta-talk about waiting — just the single remark.`,
             },
             { role: 'user', content: prompt },
           ],
@@ -277,7 +330,7 @@ export const aiCategoryBlurb = createServerFn({ method: 'POST' })
       await logTrace({
         name: 'ai-category-blurb',
         sessionId: data.sessionId,
-        tags: ['describe-category'],
+        tags: ['describe-category', medium],
         input: prompt,
         output: blurb,
         startTime,
@@ -309,20 +362,23 @@ export type AiPick = { label: string; films: Film[] }
  * return films carrying real posters + streaming availability for the region.
  */
 export const aiPickFilms = createServerFn({ method: 'POST' })
-  .inputValidator((d: { prompt: string; region: string; count?: number; sessionId?: string }) => d)
+  .inputValidator(
+    (d: { prompt: string; region: string; count?: number; medium?: Medium; sessionId?: string }) => d,
+  )
   .handler(async ({ data }): Promise<AiPick> => {
     const prompt = data.prompt.trim()
     if (!prompt) return { label: '', films: [] }
     const region = /^[A-Z]{2}$/.test(data.region) ? data.region : 'CA'
     const count = Math.min(Math.max(data.count ?? 12, 1), 24)
+    const medium: Medium = data.medium === 'tv' ? 'tv' : 'movie'
 
-    const proposal = await proposeFilms(prompt, count)
+    const proposal = await proposeFilms(prompt, count, medium)
     const candidates = proposal.films
 
     const groundStart = new Date().toISOString()
     const tmdbKey = key()
     const resolved = await Promise.all(
-      candidates.map((c) => groundFilm(tmdbKey, region, c).catch(() => null)),
+      candidates.map((c) => groundFilm(tmdbKey, region, c, medium).catch(() => null)),
     )
 
     // dedupe by tmdbId, keep order, cap at count
@@ -339,12 +395,13 @@ export const aiPickFilms = createServerFn({ method: 'POST' })
 
     // Trace: the LLM proposal (generation) + TMDB grounding (span) under one trace.
     await logTrace({
-      name: 'ai-pick-films',
+      name: medium === 'tv' ? 'ai-pick-tv' : 'ai-pick-films',
       sessionId: data.sessionId,
-      tags: ['describe-category'],
+      tags: ['describe-category', medium],
       input: prompt,
       output: { label: result.label, films: films.map((f) => `${f.title} (${f.year})`) },
       metadata: {
+        medium,
         region,
         requested: count,
         proposed: candidates.length,
